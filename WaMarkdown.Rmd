@@ -1,0 +1,200 @@
+---
+title: "Whatsapp Stats"
+author: "Vaughn Fisher"
+date: "8/18/2020"
+output:
+  html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Chat
+
+Turns out there's a handy dandy package called rwhatsapp that wrangles the exported text file data for you! The dyplr package includes the basic data manipulation functions we need.
+
+```{r cars, message=FALSE}
+library(rwhatsapp)
+library(dplyr)
+library(stringr)
+library(gridExtra)
+```
+
+replace for loops with purrr
+map_dfr
+
+
+```{r, warning=FALSE}
+files <- tibble(fn = dir()) %>% 
+    filter(str_detect(fn, '.txt$'))
+
+first <- TRUE
+
+for (file in files$fn){
+  chat <- rwa_read(file) %>% 
+    filter(!is.na(author)) # remove messages without author
+  if(first){
+    chats <- chat
+    first <- FALSE
+  }else{
+    chats <- bind_rows(chats, chat) %>% 
+      filter(!str_detect(author,"[0-9]"),
+             !str_detect(author,"Darren Dawson"))
+  }
+}
+```
+
+
+The Herd uses Whatsapp like a forum with each chat having a different topic. For now we'll look at data from the past year in just the main chat.
+
+## Plots
+
+Here's a quick one that plots the total messages per day:
+
+```{r, message=FALSE}
+library("ggplot2"); theme_set(theme_minimal())
+library("lubridate")
+chats %>%
+  mutate(day = date(time)) %>%
+  count(day) %>%
+  ggplot(aes(x = day, y = n)) +
+  geom_bar(stat = "identity") +
+  ylab("") + xlab("") +
+  ggtitle("Messages per day")
+```
+
+
+
+This shows the total messages each person has sent
+
+```{r}
+chats %>%
+  mutate(day = date(time)) %>%
+  count(author) %>%
+  ggplot(aes(x = reorder(author, n), y = n)) +
+  geom_bar(stat = "identity") +
+  ylab("") + xlab("") +
+  coord_flip() +
+  ggtitle("Number of messages") 
+  
+```
+```{r}
+chats %>%
+  count(author,source) %>%
+  group_by(author) %>% 
+  mutate(total = sum(n)) %>% 
+  ggplot(aes(x = reorder(author, total), y = n, fill=source)) +
+  geom_bar(stat = "identity") +
+  ylab("") + xlab("") +
+  coord_flip() +
+  ggtitle("Number of messages") 
+  
+```
+
+
+
+The most commonly used emojis for each person
+```{r}
+library("tidyr")
+chats %>%
+  unnest(emoji) %>%
+  count(author, emoji, sort = TRUE) %>%
+  group_by(author) %>%
+  top_n(n = 6, n) %>%
+  ggplot(aes(x = reorder(emoji, n), y = n, fill = author)) +
+  geom_col(show.legend = FALSE) +
+  ylab("") +
+  xlab("") +
+  coord_flip() +
+  facet_wrap(~author, ncol = 2, scales = "free_y")  +
+  ggtitle("Emojis")
+```
+
+
+
+Most commonly used words excluding "stopwords" and using inverse document frequency (tf–idf) to find words that are common within the messages of one author but uncommon in the rest of the messages.
+```{r}
+library("tidytext")
+library("stopwords")
+to_remove <- c(stopwords(language = "en"),
+               "media",
+               "omitted")
+
+chats %>%
+  unnest_tokens(input = text,
+                output = word) %>%
+  select(word, author) %>%
+  filter(!word %in% to_remove) %>%
+  mutate(word = gsub(".com", "", word)) %>%
+  mutate(word = gsub("^gag", "9gag", word)) %>%
+  count(author, word, sort = TRUE) %>%
+  bind_tf_idf(term = word, document = author, n = n) %>%
+  filter(n > 10) %>%
+  group_by(author) %>%
+  top_n(n = 6, tf_idf) %>%
+  ggplot(aes(x = reorder_within(word, n, author), y = n, fill = author)) +
+  geom_col(show.legend = FALSE) +
+  ylab("") +
+  xlab("") +
+  coord_flip() +
+  facet_wrap(~author, ncol = 2, scales = "free_y") +
+  scale_x_reordered() +
+  ggtitle("Common words using tf-idf")
+```
+
+
+Number of unique words used
+```{r}
+chats %>%
+  unnest_tokens(input = text,
+                output = word) %>%
+  filter(!word %in% to_remove) %>%
+  group_by(author) %>%
+  summarise(lex_diversity = n_distinct(word)) %>%
+  arrange(desc(lex_diversity)) %>%
+  ggplot(aes(x = reorder(author, lex_diversity),
+                          y = lex_diversity,
+                          fill = author)) +
+  geom_col(show.legend = FALSE) +
+  scale_y_continuous(expand = (mult = c(0, 0, 0, 500))) +
+  geom_text(aes(label = scales::comma(lex_diversity)), hjust = -0.1) +
+  ylab("unique words") +
+  xlab("") +
+  ggtitle("Lexical Diversity") +
+  coord_flip()
+```
+
+
+
+Top 3 unique words by each person
+```{r}
+authors <- unique(chats$author)
+aplots <- list()
+
+
+for(author in authors){
+  o_words <- chat %>%
+    unnest_tokens(input = text,
+                  output = word) %>%
+    filter(author != author) %>% 
+    count(word, sort = TRUE) 
+  
+  aplot <- chats %>%
+    unnest_tokens(input = text,
+                  output = word) %>%
+    filter(author == author) %>% 
+    count(word, sort = TRUE) %>% 
+    filter(!word %in% o_words$word) %>% # only select words nobody else uses
+    top_n(n = 3, n) %>%
+    ggplot(aes(x = reorder(word, n), y = n)) +
+    geom_col(show.legend = FALSE) +
+    ylab("") + xlab("") +
+    coord_flip() +
+    ggtitle(sprintf("Unique words from %s", author ))
+  
+  aplots[[author]] <- aplot
+}
+grid.arrange(grobs=aplots,ncol=3)
+```
+
