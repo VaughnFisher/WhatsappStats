@@ -19,30 +19,47 @@ library(rwhatsapp)
 library(dplyr)
 library(stringr)
 library(gridExtra)
+library(purrr)
+library(reticulate)
+source("rwa_read2.R")
+
+
+source_python("parser.py")
+
+files2 <- tibble(fn = dir()) %>% 
+    filter(str_detect(fn, 'test.txt$'))
+           
+read_file <- function(file){
+   parse_file(file) %>% 
+    filter(!is.na(sender)) %>%  # remove messages without author
+    filter(!str_detect(sender,"[0-9]"),
+           !str_detect(sender,"Darren Dawson"))
+}
+           
+combined <- map_dfr(files2$fn, read_file)
 ```
 
-replace for loops with purrr
-map_dfr
+write parser to read line into row of tibble
+use purrr with map_dfr to write parsed tibble
 
+reticulate to integrate python into r
+
+Cleaner purrr
 
 ```{r, warning=FALSE}
-files <- tibble(fn = dir()) %>% 
-    filter(str_detect(fn, '.txt$'))
+files2 <- tibble(fn = dir()) %>% 
+    filter(str_detect(fn, 'test.txt$'))
 
-first <- TRUE
-
-for (file in files$fn){
-  chat <- rwa_read(file) %>% 
-    filter(!is.na(author)) # remove messages without author
-  if(first){
-    chats <- chat
-    first <- FALSE
-  }else{
-    chats <- bind_rows(chats, chat) %>% 
-      filter(!str_detect(author,"[0-9]"),
-             !str_detect(author,"Darren Dawson"))
-  }
+read_file <- function(file){
+  rwa_read(file) %>% 
+    filter(!is.na(author)) %>%  # remove messages without author
+    filter(!str_detect(author,"[0-9]"),
+           !str_detect(author,"Darren Dawson"))
 }
+
+combined <- map_dfr(files2$fn, read_file)
+
+
 ```
 
 
@@ -55,23 +72,23 @@ Here's a quick one that plots the total messages per day:
 ```{r, message=FALSE}
 library("ggplot2"); theme_set(theme_minimal())
 library("lubridate")
-chats %>%
-  mutate(day = date(time)) %>%
-  count(day) %>%
-  ggplot(aes(x = day, y = n)) +
-  geom_bar(stat = "identity") +
+combined %>%
+  mutate(month = strftime(date(time),"%Y-%m")) %>%
+  count(month, author) %>%
+  ggplot(aes(x = , y = n)) +
+  geom_line() +
   ylab("") + xlab("") +
   ggtitle("Messages per day")
 ```
 
 
 
-This shows the total messages each person has sent
+This shows the total messages per day
 
 ```{r}
-chats %>%
-  mutate(day = date(time)) %>%
-  count(author) %>%
+combined %>%
+  mutate(day = weekdays(as.Date(time))) %>%
+  count(day) %>%
   ggplot(aes(x = reorder(author, n), y = n)) +
   geom_bar(stat = "identity") +
   ylab("") + xlab("") +
@@ -80,7 +97,7 @@ chats %>%
   
 ```
 ```{r}
-chats %>%
+combined %>%
   count(author,source) %>%
   group_by(author) %>% 
   mutate(total = sum(n)) %>% 
